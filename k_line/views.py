@@ -2,13 +2,14 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.robotparser import RobotFileParser
 from k_line.models import KLine
-from datetime import datetime
+from datetime import datetime, date
 from django.db.utils import IntegrityError
-from datetime import date
+from django_redis import get_redis_connection
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
 scheduler = BackgroundScheduler()
+redis_client = get_redis_connection()
 
 # mock browser headers
 headers = {
@@ -22,19 +23,31 @@ robot.set_url("https://finance.yahoo.com/robots.txt")
 robot.read()
 
 
-@scheduler.scheduled_job("interval", seconds=5)
+@scheduler.scheduled_job("interval", seconds=3)
 def update_kline():
     # verify whether it is legal to fetch data from the url
-    if robot.can_fetch('*', "https://finance.yahoo.com/quote/GE/history?p=GE"):
+    if robot.can_fetch('*', "https://finance.yahoo.com/quote/AMZN/history?p=AMZN"):
         print("robot protocol verified!")
 
-        # AMZN data fetching
+        # stock data fetching
         r = requests.get("https://finance.yahoo.com/quote/AMZN/history?p=AMZN", headers=headers)
         r.encoding = "utf-8"
         soup = BeautifulSoup(r.text, 'html.parser')
+
         k_line = k_line_converter(soup, 0)
-        save(k_line)
-        
+
+        latest_date = redis_client.get("latest_kline_date")
+        redis_client.set("latest_kline_date", k_line.k_date)
+
+        if latest_date is not None:
+            latest_date = latest_date.decode("utf-8")
+            latest_date = datetime.strptime(latest_date, "%Y-%m-%d").date()
+            today_date = date.today()
+            comp_days = (today_date - latest_date).days - 1
+            for i in range(0, comp_days):
+                k_line = k_line_converter(soup, i)
+                save(k_line)
+
     else:
         print("robot protocol violated!")
 
@@ -71,6 +84,6 @@ def k_line_converter(soup, index):
 def save(k_line):
     try:
         k_line.save()
-        print("save successfully!")
+        print(k_line.name, '-', k_line.k_date, "save successfully!")
     except IntegrityError:
-        print("duplicated data!")
+        print(k_line.name, '-', k_line.k_date, "duplicated data!")
