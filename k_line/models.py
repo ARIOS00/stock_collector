@@ -3,7 +3,6 @@ from django.db import models
 
 class KLine(models.Model):
 
-    id = models.BigIntegerField(primary_key=True)
     name = models.CharField(max_length=20)
     k_date = models.DateField()
     close = models.FloatField()
