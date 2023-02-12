@@ -1,15 +1,19 @@
 import requests
+import threading
 from bs4 import BeautifulSoup
 from urllib.robotparser import RobotFileParser
 from k_line.models import KLine
 from datetime import datetime, date
 from django.db.utils import IntegrityError
 from django_redis import get_redis_connection
-
 from apscheduler.schedulers.background import BackgroundScheduler
+from controls import KlineThreadControl
 
 scheduler = BackgroundScheduler()
 redis_client = get_redis_connection()
+lock = threading.Lock()
+control = KlineThreadControl(2, 0)
+redis_date_list = list()
 
 # mock browser headers
 headers = {
@@ -19,43 +23,76 @@ headers = {
 }
 
 robot = RobotFileParser()
-robot.set_url("https://finance.yahoo.com/robots.txt")
-robot.read()
 
 
-@scheduler.scheduled_job("interval", seconds=3)
-def update_kline():
+def update_kline(name):
     # verify whether it is legal to fetch data from the url
-    if robot.can_fetch('*', "https://finance.yahoo.com/quote/AMZN/history?p=AMZN"):
+    robot.set_url("https://finance.yahoo.com/robots.txt")
+    robot.read()
+    if robot.can_fetch('*', "https://finance.yahoo.com/quote/{name}/history?p={name}".format(name=name)):
         print("robot protocol verified!")
 
         # stock data fetching
-        r = requests.get("https://finance.yahoo.com/quote/AMZN/history?p=AMZN", headers=headers)
+        r = requests.get("https://finance.yahoo.com/quote/{name}/history?p={name}".format(name=name), headers=headers)
         r.encoding = "utf-8"
         soup = BeautifulSoup(r.text, 'html.parser')
 
-        k_line = k_line_converter(soup, 0)
-
         latest_date = redis_client.get("latest_kline_date")
-        redis_client.set("latest_kline_date", k_line.k_date)
 
         if latest_date is not None:
             latest_date = latest_date.decode("utf-8")
             latest_date = datetime.strptime(latest_date, "%Y-%m-%d").date()
             today_date = date.today()
             comp_days = (today_date - latest_date).days - 1
+            k_line = None
             for i in range(0, comp_days):
-                k_line = k_line_converter(soup, i)
-                save(k_line)
+                try:
+                    k_line = k_line_converter(soup, name, comp_days-i-1)
+                    save(k_line)
 
+                    # store latest date to redis
+                    # redis_client.set("latest_kline_date", k_line.k_date)
+                except Exception:
+                    print("save {name} No.{i} failed!".format(name=name, i=i))
+            return None if k_line is None else k_line.k_date
+        else:
+            print("key latest_kline_date is missing in redis!")
     else:
         print("robot protocol violated!")
+
+    return None
+
+
+@scheduler.scheduled_job("interval", seconds=10)
+def update_AMZN():
+    update_redis(update_kline("AMZN"))
+
+
+@scheduler.scheduled_job("interval", seconds=10)
+def update_TSLA():
+    update_redis(update_kline("TSLA"))
 
 
 scheduler.start()
 
 
-def k_line_converter(soup, index):
+def update_redis(k_date):
+    with lock:
+        control.current_finished_num += 1
+        if k_date is None:
+            return
+        if len(redis_date_list) == 0:
+            redis_date_list.append(k_date)
+        else:
+            if k_date < redis_date_list[0]:
+                redis_date_list.pop()
+                redis_date_list.append(k_date)
+        if control.current_finished_num == control.thread_count:
+            redis_client.set("latest_kline_date", redis_date_list[0])
+            print("redis updated!")
+
+
+def k_line_converter(soup, name, index):
     offset = index * 7
 
     # k_date conversion
@@ -69,7 +106,7 @@ def k_line_converter(soup, index):
     low = float(soup.select('td')[3 + offset].text)
 
     kline = KLine(
-        name='AMZN',
+        name=name,
         k_date=k_date,
         close=close,
         volume=volume,
@@ -87,3 +124,6 @@ def save(k_line):
         print(k_line.name, '-', k_line.k_date, "save successfully!")
     except IntegrityError:
         print(k_line.name, '-', k_line.k_date, "duplicated data!")
+
+
+
