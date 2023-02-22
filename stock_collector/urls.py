@@ -21,4 +21,5 @@ from django_apscheduler.jobstores import DjangoJobStore
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("k_line/", include("k_line.urls")),
+    path("trade/", include("trade.urls"))
 ]

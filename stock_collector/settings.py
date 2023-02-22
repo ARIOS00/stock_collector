@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "k_line",
+    "trade",
     'django_apscheduler',
 ]
 
