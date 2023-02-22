@@ -63,12 +63,12 @@ def update_kline(name):
     return None
 
 
-@scheduler.scheduled_job("interval", seconds=30)
+@scheduler.scheduled_job("interval", seconds=9999999)
 def update_AMZN():
     update_redis(update_kline("AMZN"))
 
 
-@scheduler.scheduled_job("interval", seconds=30)
+@scheduler.scheduled_job("interval", seconds=9999999)
 def update_TSLA():
     update_redis(update_kline("TSLA"))
 

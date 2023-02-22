@@ -142,3 +142,5 @@ CACHES = {
         }
     }
 }
+
+KAFKA_BOOTSTRAP_SERVERS = 'localhost:9092'
