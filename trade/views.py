@@ -43,35 +43,38 @@ def fetch_trade(name):
     r.encoding = "utf-8"
     soup = BeautifulSoup(r.text, 'html.parser')
     price = soup.find('fin-streamer', {'data-symbol': name, 'data-field': 'regularMarketPrice'}).text
-    change = soup.find('fin-streamer', {'data-symbol': name, 'data-field': 'regularMarketChange'}).text
+    diff = soup.find('fin-streamer', {'data-symbol': name, 'data-field': 'regularMarketChange'}).text
     rate = soup.find('fin-streamer', {'data-symbol': name, 'data-field': 'regularMarketChangePercent'}).text
+    fresh_time = soup.find('div', id='quote-market-notice').text
 
-    change = re.search(r'-?\d+\.\d+', change).group()
+    diff = re.search(r'-?\d+\.\d+', diff).group()
     rate = re.search(r'-?\d+\.\d+', rate).group()
+    fresh_time = re.search(r'\d+\:\d+', fresh_time).group()
 
     current_time = datetime.now()
-    formatted_time = current_time.strftime("%Y-%m-%d %H:%M:%S")
+    formatted_time = current_time.strftime("%Y-%m-%d")
+    fresh_time = formatted_time + ' ' + fresh_time + ':00'
 
-    return [price, change, rate, formatted_time]
+    data = name + ',' + price + ',' + diff + ',' + rate + ',' + fresh_time
+    print(data)
+    return data
 
 
-@scheduler.scheduled_job("interval", seconds=50)
+@scheduler.scheduled_job("interval", seconds=10)
 def produce():
-    name = 'AAPL'
-    data = fetch_trade(name)
-    data = data[0] + ',' + data[1] + ',' + data[2] + ',' + data[3]
+    AAPL_data = fetch_trade('AAPL')
+    AMZN_data = fetch_trade('AMZN')
 
     print("sending msg to kafka...")
-    p.produce('trade', key=name, value=data, callback=delivery_report)
+    p.produce('trade', key='AAPL', value=AAPL_data, callback=delivery_report, partition=0)
+    p.produce('trade', key='AMZN', value=AMZN_data, callback=delivery_report, partition=0)
     p.flush()
 
 
-@scheduler.scheduled_job("interval", seconds=3)
 def consume():
     print("try to consume...")
     msg = c.poll(1.0)
     if msg is None:
-        print("no message detected!")
         return
     if msg.error():
         if msg.error().code() == KafkaError._PARTITION_EOF:
@@ -93,3 +96,4 @@ def delivery_report(err, msg):
     else:
         print('Message delivered to {0} [partition {1}]'
               .format(msg.topic(), msg.partition()))
+
